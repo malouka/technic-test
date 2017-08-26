@@ -1,0 +1,197 @@
+---
+title: "Exercice"
+author: "Malek BEN NEYA"
+date: "26 aoÃfÂ»t 2017"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+#chargement des données 
+```{r setup, include=FALSE}
+
+getwd()
+trainset<- read.csv('C:/Users/asus/Downloads/technic-test-master/technic-test-master/data/train/trainset.CSV')
+validset1<- read.csv('C:/Users/asus/Downloads/technic-test-master/technic-test-master/data/valid/test_2017-07-12.CSV')
+validset2<- read.csv('C:/Users/asus/Downloads/technic-test-master/technic-test-master/data/valid/test_2017-07-13.CSV')
+
+```
+
+#On vérifie les valeurs manquantes dans chaque base
+```{r cars}
+CountNa<- sapply(trainset, function(x) length(which(is.na(x))))
+# pas de données  manquantes pour trainset
+CountNa<- sapply(validset1, function(x) length(which(is.na(x))))
+#32 valeurs manquantes pour consommation
+CountNa<- sapply(validset2, function(x) length(which(is.na(x))))
+#28 valeurs manquantes pour consommation
+
+```
+
+#prétraitement des données
+netoyage est une fonction qui prend en paramétre une base de donnée
+elle effectue des transformations sur la colonne
+
+```{r pressure, echo=FALSE}
+
+netoyage=function(data){
+  data$annee=format(as.Date(data$Date), "%Y")
+  data$mois=format(as.Date(data$Date), "%m")
+  data$jour=format(as.Date(data$Date), "%d")
+  data$min=as.POSIXlt(data$full)$min
+  data$heure=as.POSIXlt(data$full)$hour
+  data$sun<-as.factor(data$sun)
+  #suppression des variables 
+  
+  data$Date<-NULL
+  data$full.date<-NULL
+  data$Heures<-NULL
+  data$X<-NULL
+
+  #supression des variable avec une seule valeure
+  v_oneLevels=c()
+  for (i in names(data)){
+    if(length(unique(data[[i]]))==1){
+      data[[i]]<-NULL
+      v_oneLevels=c(v_oneLevels,i)
+    }
+  }
+
+  return(data)
+}
+data=rbind(trainset,validset1,validset2)
+data=netoyage(data)
+dim(validset2)
+
+trainset=data[1:nrow(trainset),]
+data=data[-c(1:nrow(trainset)),]
+validset1=data[1:nrow(validset1),]
+data=data[-c(1:nrow(validset1)),]
+validset2=data
+
+rm(data)
+test1=netoyage(validset1)
+test2=netoyage(validset2)
+
+
+
+
+```
+
+#Modélisation
+```{r cars}
+m=mean(trainset$Consommation)
+s=sd(trainset$Consommation)
+trainset$Consommation=(trainset$Consommation-m)/s
+
+m1 <- lm(Consommation~., trainset)
+summary(trainset)
+
+```
+
+
+
+#Validation
+```{r cars}
+mape<-function(Y,D)
+  return(mean(abs((D-Y)/D))*100)
+
+#Prédiction en utilisant la 1ere validset
+validTemp1<-validset1[which(!is.na(validset1$Consommation)),]
+p1=(predict(m1, validTemp1)*s)+m
+erreur1= mape(p1,validTemp1$Consommation)
+
+#Prédiction en utilisant la 2eme validset
+validTemp2<-validset2[which(!is.na(validset2$Consommation)),]
+p2=(predict(m1, validTemp2)*s)+m
+erreur2= mean(abs((validTemp2$Consommation-p2)/validTemp2$Consommation))*100
+
+print(paste('MAPE pour valdiation 1 = ', erreur1))
+print(paste('MAPE pour valdiation 2 = ', erreur2))
+(erreur1*dim(validTemp1)[1]+erreur2*dim(validTemp2)[1])/(dim(validTemp1)[1]+dim(validTemp2)[1])
+
+
+
+
+
+```
+
+#selection des variables par stepwise
+
+```{r cars}
+step.AIC <- step(m1,  direction='both', trace=FALSE)
+step.BIC <- step(m1, direction='both', k=log(nrow(trainset)), trace=FALSE)
+summary(step.AIC)
+summary(step.BIC)
+
+#trainset$min<-NULL
+
+
+```
+
+```{r cars}
+library(glmnet)
+?glmnet
+?cv.glmnet
+x <- data.matrix(trainset[,-which(names(trainset)=='Consommation')])
+colnames(x) <- NULL
+y <- as.vector(trainset$Consommation)
+
+
+ridge <- cv.glmnet(x,y,alpha=0)
+
+plot(ridge)
+
+ridge$lambda.min
+
+ridge <- glmnet(x,y,alpha=0, lambda=ridge$lambda.min)
+
+v1=data.matrix(validTemp1[,-which(names(validTemp1)=='Consommation')])
+colnames(v1) <- NULL
+pred1=(predict(ridge, newx=v1)*s)+m
+erreur3=mape(pred1,validTemp1$Consommation)
+
+v2=data.matrix(validTemp2[,-which(names(validTemp2)=='Consommation')])
+colnames(v2) <- NULL
+pred1=(predict(ridge, newx=v2)*s)+m
+erreur4=mape(pred1,validTemp2$Consommation)
+
+print(erreur3)
+print(erreur4)
+
+
+
+```
+
+```{r cars}
+x <- data.matrix(trainset[,-which(names(trainset)=='Consommation')])
+colnames(x) <- NULL
+y <- as.vector(trainset$Consommation)
+
+
+lasso <- cv.glmnet(x,y,alpha=1)
+
+plot(lasso)
+
+lasso$lambda.min
+
+lasso <- glmnet(x,y,alpha=1, lambda=lasso$lambda.min)
+
+v1=data.matrix(validTemp1[,-which(names(validTemp1)=='Consommation')])
+colnames(v1) <- NULL
+pred1=(predict(lasso, newx=v1)*s)+m
+erreur5=mape(pred1,validTemp1$Consommation)
+
+v2=data.matrix(validTemp2[,-which(names(validTemp2)=='Consommation')])
+colnames(v2) <- NULL
+pred1=(predict(lasso, newx=v2)*s)+m
+erreur6=mape(pred1,validTemp2$Consommation)
+
+print(erreur5)
+print(erreur6)
+
+(erreur5*dim(validTemp1)[1]+erreur6*dim(validTemp2)[1])/(dim(validTemp1)[1]+dim(validTemp2)[1])
+
+
+```
+
