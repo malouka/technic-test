@@ -1,0 +1,248 @@
+---
+title: "Exercice"
+author: "Malek BEN NEYA"
+date: "26 aoÃfÆ'Ã???â???TÃfâ???sÃ,Â»t 2017"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+#chargement des données 
+```{r setup, include=TRUE}
+
+getwd()
+trainset<- read.csv('C:/Users/asus/Downloads/technic-test-master/technic-test-master/data/train/trainset.CSV')
+validset1<- read.csv('C:/Users/asus/Downloads/technic-test-master/technic-test-master/data/valid/test_2017-07-12.CSV')
+validset2<- read.csv('C:/Users/asus/Downloads/technic-test-master/technic-test-master/data/valid/test_2017-07-13.CSV')
+testset1<- read.csv('C:/Users/asus/Downloads/technic-test-master/technic-test-master/data/test/testset_2017-07-12.CSV')
+testset2<- read.csv('C:/Users/asus/Downloads/technic-test-master/technic-test-master/data/test/testset_2017-07-13.CSV')
+
+
+
+```
+
+#On vérifie les valeurs manquantes dans chaque base
+```{r pressure, echo=TRUE}
+CountNa<- sapply(trainset, function(x) length(which(is.na(x))))
+print("Pas de données  manquantes pour trainset")
+
+CountNa<- sapply(validset1, function(x) length(which(is.na(x))))
+print("32 valeurs manquantes pour la variable consommation dans validset1" )
+CountNa<- sapply(validset2, function(x) length(which(is.na(x))))
+print("28 valeurs manquantes pour la variable consommation dans validset2")
+
+```
+
+#prétraitement des données
+netoyage est une fonction qui prend en paramétre une base de donnée
+-elle effectue des transformations sur la colonne Date et la sépare en jour, mois et année
+-elle effectue des transformations sur la colonne full et extraie les Min et Heures
+-elle transforme la variable sun en facteur car c'est variable binaire
+
+```{r , echo=TRUE}
+
+netoyage=function(data){
+  data$annee=format(as.Date(data$Date), "%Y")
+  data$mois=format(as.Date(data$Date), "%m")
+  data$jour=format(as.Date(data$Date), "%d")
+  data$min=as.POSIXlt(data$full)$min
+  data$heure=as.POSIXlt(data$full)$hour
+  data$sun<-as.factor(data$sun)
+  
+  #suppression des variables 
+  
+  data$Date<-NULL
+  data$full.date<-NULL
+  data$Heures<-NULL
+  data$X<-NULL
+
+  #supression des variable avec une seule valeure
+  v_oneLevels=c()
+  for (i in names(data)){
+    if(length(unique(data[[i]]))==1){
+      data[[i]]<-NULL
+      v_oneLevels=c(v_oneLevels,i)
+    }
+  }
+
+  return(data)
+}
+
+#je combine le trainset et les 2 validset pour faire le netoyage
+alldata=rbind(trainset,validset1,validset2)
+alldata=netoyage(alldata)
+
+
+trainset=alldata[1:nrow(trainset),]
+alldata=alldata[-c(1:nrow(trainset)),]
+validset1=alldata[1:nrow(validset1),]
+alldata=alldata[-c(1:nrow(validset1)),]
+validset2=alldata
+dim(validset2)
+
+
+
+
+```
+
+#Modéle linéaire
+```{r , echo=TRUE}
+#On commence par normaliser la consommation, cela pourra augmenter légérement les performance des modéles
+m=mean(trainset$Consommation)
+s=sd(trainset$Consommation)
+trainset$Consommation=(trainset$Consommation-m)/s
+m1 <- lm(Consommation~., trainset)
+```
+
+
+
+#Prédiction et Erreur Mape
+```{r , echo=TRUE}
+#fonction pour calculer l'erreur Mape
+mape<-function(Y,D)
+  return(mean(abs((D-Y)/D))*100)
+
+#Prédiction en utilisant la 1ere validset
+validTemp1<-validset1[which(!is.na(validset1$Consommation)),]
+p1=(predict(m1, validTemp1)*s)+m
+erreur1= mape(p1,validTemp1$Consommation)
+
+#Prédiction en utilisant la 2eme validset
+validTemp2<-validset2[which(!is.na(validset2$Consommation)),]
+p2=(predict(m1, validTemp2)*s)+m
+erreur2= mean(abs((validTemp2$Consommation-p2)/validTemp2$Consommation))*100
+
+#affichage des erreurs
+print(paste('MAPE pour valdiation 1 = ', erreur1))
+print(paste('MAPE pour valdiation 2 = ', erreur2))
+
+```
+
+#selection des variables par stepwise
+On peut selectionner les variables les plus pertinantes avec les stepwise, dans ce cas le stepwise. 
+Mais le resultat obtenu ne permet pas d'eliminer des variables.
+
+```{r , echo=TRUE}
+step.AIC <- step(m1,  direction='both', trace=FALSE)
+step.BIC <- step(m1, direction='both', k=log(nrow(trainset)), trace=FALSE)
+summary(step.AIC)
+summary(step.BIC)
+
+```
+
+#Régularisation Ridge
+```{r , echo=TRUE}
+library(glmnet)
+#il faut transformer les dataframe en matrice pour utiliser glmnet
+x <- data.matrix(trainset[,-which(names(trainset)=='Consommation')])
+colnames(x) <- NULL
+y <- as.vector(trainset$Consommation)
+
+#validation pour obtenir le meilleur lambda
+cv.ridge <- cv.glmnet(x,y,alpha=0)
+plot(cv.ridge)
+cv.ridge$lambda.min
+ridge <- glmnet(x,y,alpha=0, lambda=cv.ridge$lambda.min)
+
+
+#Prédiction pour la set 1
+v1=data.matrix(validTemp1[,-which(names(validTemp1)=='Consommation')])
+colnames(v1) <- NULL
+pred1=(predict(ridge, newx=v1)*s)+m
+erreur3=mape(pred1,validTemp1$Consommation)
+#Prédiction pour la set 2
+v2=data.matrix(validTemp2[,-which(names(validTemp2)=='Consommation')])
+colnames(v2) <- NULL
+pred1=(predict(ridge, newx=v2)*s)+m
+erreur4=mape(pred1,validTemp2$Consommation)
+
+#affichage des erreurs
+print(paste('MAPE pour valdiation 1 = ', erreur3))
+print(paste('MAPE pour valdiation 2 = ', erreur4))
+
+
+
+```
+#Régularisation Lasso
+```{r , echo=TRUE}
+#transformation du train en matrice pour appliquer le modele
+x <- data.matrix(trainset[,-which(names(trainset)=='Consommation')])
+colnames(x) <- NULL
+y <- as.vector(trainset$Consommation)
+
+#validation croisée sur le lambda
+cv.lasso <- cv.glmnet(x,y,alpha=1)
+plot(cv.lasso)
+cv.lasso$lambda.min
+lasso <- glmnet(x,y,alpha=1, lambda=cv.lasso$lambda.min)
+
+#Prédiction pour la set 1
+v1=data.matrix(validTemp1[,-which(names(validTemp1)=='Consommation')])
+colnames(v1) <- NULL
+pred1=(predict(lasso, newx=v1)*s)+m
+erreur5=mape(pred1,validTemp1$Consommation)
+#Prédiction pour la set 2
+v2=data.matrix(validTemp2[,-which(names(validTemp2)=='Consommation')])
+colnames(v2) <- NULL
+pred1=(predict(lasso, newx=v2)*s)+m
+erreur6=mape(pred1,validTemp2$Consommation)
+
+#affichage des erreurs
+print(paste('MAPE pour valdiation 1 = ', erreur5))
+print(paste('MAPE pour valdiation 2 = ', erreur6))
+```
+
+#Prédiction en utilisant les tests
+netoyage_test est une fonction qui prend en argument deux jeux de donées, 
+elle effectue des transformations sur les colonnes dates et hour du test
+elle supprime les variables de test dont le nom n'apparait pas dans data
+
+
+```{r , echo=TRUE}
+#sauvegarde des variables qui seront utilisés dans l'affichage finales des resultats 
+resultat1=testset1[c('region.code','Date','Heures')]
+resultat2=testset2[c('region.code','Date','Heures')]
+
+netoyage_test=function(test,data){
+#modification des types
+  test$annee=format(as.Date(test$Date), "%Y")
+  test$mois=format(as.Date(test$Date), "%m")
+  test$jour=format(as.Date(test$Date), "%d")
+  test$min=as.POSIXlt(test$full)$min
+  test$heure=as.POSIXlt(test$full)$hour
+  test$sun<-as.factor(test$sun)
+  #suppression des variables 
+  test=test[names(data[,-which(names(data)=='Consommation')])]
+  return(test)
+}
+
+testset1=netoyage_test(testset1,trainset)
+testset2=netoyage_test(testset2,trainset)
+
+```
+#prédiction pour le testset1 en utilisant la régularisation lasso
+La régularisation Lasso a  la meilleure performance pour la validation de la validset1 donc on 
+l'utilise pour la prédiction sur le testset1
+```{r , echo=TRUE}
+t1=data.matrix(testset1)
+colnames(t1) <- NULL
+ptest1=(predict(lasso, newx=t1)*s)+m
+
+resultat1=cbind(resultat1,ptest1)
+names(resultat1)[4]='pred'
+write.csv2(resultat1,'pred1.csv',row.names=FALSE)
+
+```
+
+#prédiction pour le testset2 en utilisant le modéle lineaire 
+Le modéle linéire a donné la meilleure performance pour la validation de la validset2 donc on 
+l'utilise pour la prédiction sur le testset2
+```{r , echo=TRUE}
+
+ptest2=(predict(m1, testset2)*s)+m
+resultat2=cbind(resultat2,ptest2)
+names(resultat2)[4]='pred'
+write.csv2(resultat2,'pred2.csv',row.names=FALSE)
+```
+```
+
